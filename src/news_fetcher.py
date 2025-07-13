@@ -6,6 +6,7 @@ import os
 import json
 import time
 import warnings
+import re
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List
 import pandas as pd
@@ -108,10 +109,17 @@ class NewsFetcher:
             接続成功可否
         """
         try:
+            api_key = self.eikon_config.get('api_key') or os.getenv('REFINITIV_API_KEY')
+            
+            # デモモードチェック
+            if api_key == 'DEMO_MODE':
+                self.is_connected = True
+                self.logger.info("デモモードで実行中")
+                return True
+            
             if not ek:
                 raise ImportError("eikon module not available")
             
-            api_key = self.eikon_config.get('api_key') or os.getenv('REFINITIV_API_KEY')
             if not api_key:
                 raise ValueError("API key not found")
             
@@ -173,8 +181,14 @@ class NewsFetcher:
             
             # API呼び出し
             start_time = time.time()
-            news_data = ek.get_news_headlines(**params)
-            response_time = time.time() - start_time
+            
+            # デモモードチェック
+            if self.eikon_config.get('api_key') == 'DEMO_MODE':
+                news_data = self._generate_demo_data(count_val, category)
+                response_time = 0.1
+            else:
+                news_data = ek.get_news_headlines(**params)
+                response_time = time.time() - start_time
             
             # ログ記録
             self.api_logger.log_api_call(
@@ -197,40 +211,55 @@ class NewsFetcher:
                 
                 # 各記事のヘッドラインと本文をチェックして複数カテゴリを検出
                 for _, row in cleaned_data.iterrows():
-                    headline = str(row.get('text', '')).lower()
                     categories_found = []
                     
-                    # 非鉄金属6種のキーワード検出
-                    if 'copper' in headline or '銅' in headline:
-                        categories_found.append('COPPER')
-                    if 'aluminum' in headline or 'aluminium' in headline or 'アルミ' in headline:
-                        categories_found.append('ALUMINIUM')
-                    if 'zinc' in headline or '亜鉛' in headline:
-                        categories_found.append('ZINC')
-                    if 'lead' in headline or '鉛' in headline:
-                        categories_found.append('LEAD')
-                    if 'nickel' in headline or 'ニッケル' in headline:
-                        categories_found.append('NICKEL')
-                    if 'tin' in headline or 'スズ' in headline:
-                        categories_found.append('TIN')
-                    
-                    # 基本カテゴリ3種
-                    if 'equity' in headline or '株式' in headline or 'stock' in headline:
-                        categories_found.append('EQUITY')
-                    if 'forex' in headline or '外国為替' in headline or 'currency' in headline:
-                        categories_found.append('FOREX')
-                    if 'commodity' in headline or 'commodities' in headline or '商品' in headline:
-                        categories_found.append('COMMODITIES')
-                    
-                    # 特別カテゴリ  
-                    if 'ny市場サマリー' in headline or 'ＮＹ市場サマリー' in headline or 'ｎｙ市場サマリー' in headline:
-                        categories_found.append('NY_MARKET')
-                    
-                    # 指定されたカテゴリも追加（重複チェック）
-                    if category and category not in categories_found:
+                    # 1. 検索時に指定されたカテゴリを最優先で追加
+                    if category:
                         categories_found.append(category)
                     
-                    # カンマ区切りで結合
+                    # 2. ヘッドラインと本文の両方を検索対象に
+                    headline = str(row.get('text', '')).lower()
+                    body = str(row.get('body_text', '')).lower() if row.get('body_text') else ''
+                    full_text = headline + ' ' + body
+                    
+                    # 3. 改善されたキーワード検出（単語境界を考慮）
+                    # 非鉄金属6種のキーワード検出
+                    if re.search(r'\b(copper|銅)\b', full_text, re.IGNORECASE):
+                        if 'COPPER' not in categories_found:
+                            categories_found.append('COPPER')
+                    if re.search(r'\b(aluminum|aluminium|アルミ)\b', full_text, re.IGNORECASE):
+                        if 'ALUMINIUM' not in categories_found:
+                            categories_found.append('ALUMINIUM')
+                    if re.search(r'\b(zinc|亜鉛)\b', full_text, re.IGNORECASE):
+                        if 'ZINC' not in categories_found:
+                            categories_found.append('ZINC')
+                    if re.search(r'\b(lead|鉛)\b', full_text, re.IGNORECASE):
+                        if 'LEAD' not in categories_found:
+                            categories_found.append('LEAD')
+                    if re.search(r'\b(nickel|ニッケル)\b', full_text, re.IGNORECASE):
+                        if 'NICKEL' not in categories_found:
+                            categories_found.append('NICKEL')
+                    if re.search(r'\b(tin|スズ|錫)\b', full_text, re.IGNORECASE):
+                        if 'TIN' not in categories_found:
+                            categories_found.append('TIN')
+                    
+                    # 基本カテゴリ3種
+                    if re.search(r'\b(equity|equities|stock|stocks|share|shares|株式|株価)\b', full_text, re.IGNORECASE):
+                        if 'EQUITY' not in categories_found:
+                            categories_found.append('EQUITY')
+                    if re.search(r'\b(forex|fx|currency|currencies|exchange rate|為替|外国為替|通貨)\b', full_text, re.IGNORECASE):
+                        if 'FOREX' not in categories_found:
+                            categories_found.append('FOREX')
+                    if re.search(r'\b(commodity|commodities|商品|コモディティ)\b', full_text, re.IGNORECASE):
+                        if 'COMMODITIES' not in categories_found:
+                            categories_found.append('COMMODITIES')
+                    
+                    # 特別カテゴリ  
+                    if re.search(r'(ny市場サマリー|ＮＹ市場サマリー|ｎｙ市場サマリー|NY市場)', full_text, re.IGNORECASE):
+                        if 'NY_MARKET' not in categories_found:
+                            categories_found.append('NY_MARKET')
+                    
+                    # カンマ区切りで結合（検索カテゴリが先頭）
                     detected_categories.append(','.join(categories_found) if categories_found else '')
                 
                 cleaned_data['detected_category'] = detected_categories

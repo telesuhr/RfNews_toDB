@@ -49,7 +49,7 @@ class DatabaseConfig:
     def get_database_url(self) -> str:
         """データベース接続URLを構築"""
         # SQLiteデータベースの場合（テスト用）
-        if self.config['database'].endswith('.db'):
+        if self.config.get('type') == 'sqlite' or self.config.get('database', '').endswith('.db'):
             return f"sqlite:///{self.config['database']}"
         
         # PostgreSQLデータベースの場合（ポート5432がデフォルト）

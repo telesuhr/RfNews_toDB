@@ -160,7 +160,16 @@ class DatabaseManager:
             作成成功可否
         """
         try:
-            result = self.db_config.execute_sql_file('sql/create_tables_postgresql.sql')
+            # データベースタイプに応じたSQLファイルを選択
+            db_url = self.db_config.get_database_url()
+            if 'sqlite' in db_url:
+                sql_file = 'sql/create_tables_sqlite.sql'
+            elif 'postgresql' in db_url:
+                sql_file = 'sql/create_tables_postgresql.sql'
+            else:
+                sql_file = 'sql/create_tables.sql'
+            
+            result = self.db_config.execute_sql_file(sql_file)
             if result:
                 self.logger.info("テーブル作成完了")
             else:
