@@ -125,18 +125,21 @@ class NewsFetcher:
             self.is_connected = False
             return False
     
-    def fetch_headlines(self, count: int = None, category: str = None, 
-                       language: str = None, start_date: datetime = None,
-                       end_date: datetime = None) -> Optional[pd.DataFrame]:
+    def fetch_headlines(self, count: int = None, query: str = None, 
+                       category: str = None, language: str = None, 
+                       start_date: datetime = None, end_date: datetime = None,
+                       fetch_body: bool = True) -> Optional[pd.DataFrame]:
         """
-        ニュースヘッドライン取得
+        ニュースヘッドライン取得（本文取得がデフォルト）
         
         Args:
             count: 取得件数
-            category: カテゴリフィルタ
+            query: 検索クエリ（Refinitiv構文）
+            category: カテゴリフィルタ（メタル、商品等）
             language: 言語フィルタ
             start_date: 開始日時
             end_date: 終了日時
+            fetch_body: 本文も取得するか（デフォルト: True）
         
         Returns:
             ニュースデータフレーム
@@ -147,25 +150,36 @@ class NewsFetcher:
         
         try:
             # パラメータ設定
-            params = {}
             count_val = count or self.fetch_config.get('default_count', 100)
             count_val = min(count_val, self.fetch_config.get('max_count', 500))
             
-            # Refinitiv APIは基本的にcountのみをサポート
-            # その他のフィルタは取得後に適用
+            # クエリ構築
+            search_query = self._build_search_query(query, category, language)
+            
+            # パラメータ辞書構築
+            params = {
+                'query': search_query,
+                'count': count_val
+            }
+            
+            # 日付範囲設定
+            if start_date:
+                params['date_from'] = start_date.strftime('%Y-%m-%dT%H:%M:%S')
+            if end_date:
+                params['date_to'] = end_date.strftime('%Y-%m-%dT%H:%M:%S')
             
             # レート制限適用
             self._apply_rate_limit()
             
             # API呼び出し
             start_time = time.time()
-            news_data = ek.get_news_headlines(count=count_val)
+            news_data = ek.get_news_headlines(**params)
             response_time = time.time() - start_time
             
             # ログ記録
             self.api_logger.log_api_call(
                 method='get_news_headlines',
-                params={'count': count_val},
+                params=params,
                 success=True,
                 response_time=response_time
             )
@@ -173,6 +187,54 @@ class NewsFetcher:
             if news_data is not None and not news_data.empty:
                 # データ検証・クリーニング
                 cleaned_data = self._validate_and_clean_data(news_data)
+                
+                # 本文取得（オプション）
+                if fetch_body and not cleaned_data.empty:
+                    cleaned_data = self._fetch_news_bodies(cleaned_data)
+                
+                # カテゴリ情報を自動検出・追加
+                detected_categories = []
+                
+                # 各記事のヘッドラインと本文をチェックして複数カテゴリを検出
+                for _, row in cleaned_data.iterrows():
+                    headline = str(row.get('text', '')).lower()
+                    categories_found = []
+                    
+                    # 非鉄金属6種のキーワード検出
+                    if 'copper' in headline or '銅' in headline:
+                        categories_found.append('COPPER')
+                    if 'aluminum' in headline or 'aluminium' in headline or 'アルミ' in headline:
+                        categories_found.append('ALUMINIUM')
+                    if 'zinc' in headline or '亜鉛' in headline:
+                        categories_found.append('ZINC')
+                    if 'lead' in headline or '鉛' in headline:
+                        categories_found.append('LEAD')
+                    if 'nickel' in headline or 'ニッケル' in headline:
+                        categories_found.append('NICKEL')
+                    if 'tin' in headline or 'スズ' in headline:
+                        categories_found.append('TIN')
+                    
+                    # 基本カテゴリ3種
+                    if 'equity' in headline or '株式' in headline or 'stock' in headline:
+                        categories_found.append('EQUITY')
+                    if 'forex' in headline or '外国為替' in headline or 'currency' in headline:
+                        categories_found.append('FOREX')
+                    if 'commodity' in headline or 'commodities' in headline or '商品' in headline:
+                        categories_found.append('COMMODITIES')
+                    
+                    # 特別カテゴリ  
+                    if 'ny市場サマリー' in headline or 'ＮＹ市場サマリー' in headline or 'ｎｙ市場サマリー' in headline:
+                        categories_found.append('NY_MARKET')
+                    
+                    # 指定されたカテゴリも追加（重複チェック）
+                    if category and category not in categories_found:
+                        categories_found.append(category)
+                    
+                    # カンマ区切りで結合
+                    detected_categories.append(','.join(categories_found) if categories_found else '')
+                
+                cleaned_data['detected_category'] = detected_categories
+                
                 self.logger.info(f"ニュース取得成功: {len(cleaned_data)}件")
                 return cleaned_data
             else:
@@ -220,6 +282,120 @@ class NewsFetcher:
                     return None
         
         return None
+    
+    def _build_search_query(self, query: str = None, category: str = None, 
+                           language: str = None) -> str:
+        """
+        Refinitiv検索クエリを構築
+        
+        Args:
+            query: カスタムクエリ
+            category: カテゴリ
+            language: 言語
+        
+        Returns:
+            検索クエリ文字列
+        """
+        if query:
+            return query
+        
+        # カテゴリ別クエリマッピング（簡素化版）
+        category_queries = {
+            # 非鉄金属6種
+            'COPPER': 'copper OR "copper prices"',
+            'ALUMINIUM': 'aluminum OR aluminium',
+            'ZINC': 'zinc',
+            'LEAD': 'lead',
+            'NICKEL': 'nickel',
+            'TIN': 'tin',
+            # 基本カテゴリ3種
+            'EQUITY': 'Topic:EQUITY',
+            'FOREX': 'Topic:FOREX',
+            'COMMODITIES': 'commodities OR metals',
+            # 特別カテゴリ
+            'NY_MARKET': 'NY市場サマリー OR ＮＹ市場サマリー'
+        }
+        
+        # カテゴリクエリを取得
+        base_query = category_queries.get(category, 'Topic:TOPALL')
+        
+        # 言語フィルタを追加（シンプルなクエリに変更）
+        if language:
+            lang_map = {'en': 'LEN', 'ja': 'LJA'}
+            lang_code = lang_map.get(language, 'LEN')
+            base_query = f'{base_query} AND Language:{lang_code}'
+        # デフォルトでは言語フィルタを適用しない（より柔軟な検索のため）
+        
+        return base_query
+    
+    def _fetch_news_bodies(self, data: pd.DataFrame) -> pd.DataFrame:
+        """
+        ニュース本文を取得
+        
+        Args:
+            data: ヘッドラインデータ
+        
+        Returns:
+            本文付きデータ
+        """
+        self.logger.info(f"本文取得開始: {len(data)}件")
+        
+        body_texts = []
+        for _, row in data.iterrows():
+            try:
+                story_id = row['storyId']
+                
+                # レート制限
+                self._apply_rate_limit()
+                
+                # 本文取得
+                body = ek.get_news_story(story_id)
+                
+                if body:
+                    # HTMLタグを除去
+                    clean_body = self._clean_html(str(body))
+                    body_texts.append(clean_body)
+                    self.logger.debug(f"本文取得成功: {story_id} ({len(clean_body)}文字)")
+                else:
+                    body_texts.append(None)
+                    self.logger.debug(f"本文取得失敗: {story_id}")
+                    
+            except Exception as e:
+                self.logger.warning(f"本文取得エラー {story_id}: {e}")
+                body_texts.append(None)
+        
+        # 本文をデータフレームに追加
+        data = data.copy()
+        data['body_text'] = body_texts
+        
+        self.logger.info(f"本文取得完了: {len([b for b in body_texts if b])}件成功")
+        return data
+    
+    def _clean_html(self, html_text: str) -> str:
+        """
+        HTMLタグを除去してプレーンテキストを取得
+        
+        Args:
+            html_text: HTML文字列
+        
+        Returns:
+            クリーンなテキスト
+        """
+        try:
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(html_text, 'html.parser')
+            
+            # テキストのみ抽出
+            text = soup.get_text()
+            
+            # 余分な空白を除去
+            import re
+            text = re.sub(r'\s+', ' ', text).strip()
+            
+            return text
+        except Exception as e:
+            self.logger.warning(f"HTML クリーニングエラー: {e}")
+            return html_text
     
     def _apply_rate_limit(self):
         """レート制限適用"""
@@ -271,7 +447,8 @@ class NewsFetcher:
     def _standardize_datetime(self, data: pd.DataFrame, datetime_column: str) -> pd.DataFrame:
         """日時フォーマット統一"""
         try:
-            data[datetime_column] = pd.to_datetime(data[datetime_column], utc=True)
+            # datetime64ユニット指定によるエラーを回避
+            data[datetime_column] = pd.to_datetime(data[datetime_column], utc=True, errors='coerce')
             # 無効な日時を除外
             data = data[data[datetime_column].notna()]
         except Exception as e:
@@ -352,11 +529,11 @@ class NewsFetcher:
                     story_id=str(story_id),
                     headline=str(headline),
                     summary=None,  # Refinitivのget_news_headlinesには要約なし
-                    body_text=None,  # ヘッドライン取得なので本文なし
+                    body_text=row.get('body_text'),  # 本文（取得している場合）
                     source=source,
                     published_at=published_at,
                     language='en',  # デフォルト
-                    category=None,  # ヘッドライン取得時は不明
+                    category=row.get('detected_category'),  # 検出されたカテゴリ
                     urgency_level=3  # デフォルト
                 )
                 

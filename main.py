@@ -62,18 +62,21 @@ class RefinitivNewsApp:
             self.logger.error(f"アプリケーション初期化エラー: {e}")
             return False
     
-    def fetch_and_store_news(self, count: int = 100, category: str = None,
-                           language: str = None, start_date: datetime = None,
-                           end_date: datetime = None) -> Dict[str, Any]:
+    def fetch_and_store_news(self, count: int = 100, query: str = None,
+                           category: str = None, language: str = None, 
+                           start_date: datetime = None, end_date: datetime = None,
+                           fetch_body: bool = True) -> Dict[str, Any]:
         """
         ニュースを取得してデータベースに格納
         
         Args:
             count: 取得件数
+            query: 検索クエリ
             category: カテゴリフィルタ
             language: 言語フィルタ
             start_date: 開始日時
             end_date: 終了日時
+            fetch_body: 本文も取得するか（デフォルト: True）
         
         Returns:
             処理結果辞書
@@ -87,10 +90,12 @@ class RefinitivNewsApp:
             # ニュース取得（リトライ付き）
             news_data = self.news_fetcher.fetch_headlines_with_retry(
                 count=count,
+                query=query,
                 category=category,
                 language=language,
                 start_date=start_date,
-                end_date=end_date
+                end_date=end_date,
+                fetch_body=fetch_body
             )
             
             if news_data is None or news_data.empty:
@@ -222,10 +227,12 @@ class RefinitivNewsApp:
         # ニュース取得・格納
         result = self.fetch_and_store_news(
             count=args.count,
+            query=getattr(args, 'query', None),
             category=args.category,
             language=args.language,
             start_date=start_date,
-            end_date=end_date
+            end_date=end_date,
+            fetch_body=not getattr(args, 'no_fetch_body', False)
         )
         
         # 結果表示
@@ -277,10 +284,14 @@ def main():
     # fetchコマンド
     fetch_parser = subparsers.add_parser('fetch', help='ニュース取得・格納')
     fetch_parser.add_argument('--count', type=int, default=100, help='取得件数')
-    fetch_parser.add_argument('--category', type=str, help='カテゴリフィルタ')
-    fetch_parser.add_argument('--language', type=str, help='言語フィルタ')
+    fetch_parser.add_argument('--query', type=str, help='検索クエリ（Refinitiv構文）')
+    fetch_parser.add_argument('--category', type=str, 
+                             choices=['COPPER', 'ALUMINIUM', 'ZINC', 'LEAD', 'NICKEL', 'TIN', 'EQUITY', 'FOREX', 'COMMODITIES', 'NY_MARKET'],
+                             help='カテゴリフィルタ')
+    fetch_parser.add_argument('--language', type=str, choices=['en', 'ja'], help='言語フィルタ')
     fetch_parser.add_argument('--start-date', type=str, help='開始日時 (ISO format)')
     fetch_parser.add_argument('--end-date', type=str, help='終了日時 (ISO format)')
+    fetch_parser.add_argument('--no-fetch-body', action='store_true', help='本文取得をスキップする（デフォルトは本文取得あり）')
     
     # statsコマンド
     stats_parser = subparsers.add_parser('stats', help='統計情報表示')
