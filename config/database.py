@@ -48,22 +48,46 @@ class DatabaseConfig:
     
     def get_database_url(self) -> str:
         """データベース接続URLを構築"""
+        # データベースタイプを取得（デフォルトはpostgresql）
+        db_type = self.config.get('type', 'postgresql').lower()
+        
         # SQLiteデータベースの場合（テスト用）
-        if self.config.get('type') == 'sqlite' or self.config.get('database', '').endswith('.db'):
+        if db_type == 'sqlite' or self.config.get('database', '').endswith('.db'):
             return f"sqlite:///{self.config['database']}"
         
-        # PostgreSQLデータベースの場合（ポート5432がデフォルト）
-        if self.config.get('port') == 5432:
+        # PostgreSQLデータベースの場合
+        if db_type == 'postgresql':
             return (
                 f"postgresql+psycopg2://{self.config['username']}:{self.config['password']}"
-                f"@{self.config['host']}:{self.config['port']}/{self.config['database']}"
+                f"@{self.config['host']}:{self.config.get('port', 5432)}/{self.config['database']}"
+            )
+        
+        # SQL Serverデータベースの場合
+        if db_type == 'sqlserver':
+            # ドライバー名を取得（デフォルトはODBC Driver 17 for SQL Server）
+            driver = self.config.get('driver', 'ODBC Driver 17 for SQL Server')
+            # urllib.parse.quote_plusでドライバー名をエンコード
+            import urllib.parse
+            driver_encoded = urllib.parse.quote_plus(driver)
+            return (
+                f"mssql+pyodbc://{self.config['username']}:{self.config['password']}"
+                f"@{self.config['host']}:{self.config.get('port', 1433)}/{self.config['database']}"
+                f"?driver={driver_encoded}"
             )
         
         # MySQLデータベースの場合
+        if db_type == 'mysql':
+            return (
+                f"mysql+pymysql://{self.config['username']}:{self.config['password']}"
+                f"@{self.config['host']}:{self.config.get('port', 3306)}/{self.config['database']}"
+                f"?charset={self.config.get('charset', 'utf8mb4')}"
+            )
+        
+        # デフォルトはPostgreSQL
+        logger.warning(f"不明なデータベースタイプ: {db_type}. PostgreSQLとして処理します。")
         return (
-            f"mysql+pymysql://{self.config['username']}:{self.config['password']}"
-            f"@{self.config['host']}:{self.config['port']}/{self.config['database']}"
-            f"?charset={self.config['charset']}"
+            f"postgresql+psycopg2://{self.config['username']}:{self.config['password']}"
+            f"@{self.config['host']}:{self.config.get('port', 5432)}/{self.config['database']}"
         )
     
     def create_engine(self):
@@ -131,6 +155,35 @@ class DatabaseConfig:
                 return True
         except Exception as e:
             logger.error(f"データベース接続テストエラー: {e}")
+            return False
+    
+    def create_tables_if_not_exists(self) -> bool:
+        """テーブルが存在しない場合に作成"""
+        try:
+            engine = self.create_engine()
+            # metadataをインポート
+            from sqlalchemy import inspect
+            inspector = inspect(engine)
+            
+            # 既存のテーブルリストを取得
+            existing_tables = inspector.get_table_names()
+            logger.info(f"既存のテーブル: {existing_tables}")
+            
+            # ORMモデルからテーブルを作成（存在しないものだけ）
+            Base.metadata.create_all(bind=engine, checkfirst=True)
+            
+            # 作成後のテーブルリストを取得
+            new_tables = inspector.get_table_names()
+            created_tables = set(new_tables) - set(existing_tables)
+            
+            if created_tables:
+                logger.info(f"新規作成されたテーブル: {list(created_tables)}")
+            else:
+                logger.info("すべてのテーブルが既に存在しています")
+            
+            return True
+        except Exception as e:
+            logger.error(f"テーブル作成エラー: {e}")
             return False
 
 # グローバルインスタンス

@@ -143,6 +143,12 @@ class DatabaseManager:
             if self.is_connected:
                 self.db_logger.log_connection("成功", success=True)
                 self.logger.info("データベース接続成功")
+                
+                # テーブルが存在しない場合は自動作成
+                if self.db_config.create_tables_if_not_exists():
+                    self.logger.info("テーブル確認・作成処理完了")
+                else:
+                    self.logger.warning("テーブル確認・作成処理で警告が発生しました")
             else:
                 self.db_logger.log_connection("失敗", success=False)
                 self.logger.error("データベース接続失敗")
@@ -160,20 +166,12 @@ class DatabaseManager:
             作成成功可否
         """
         try:
-            # データベースタイプに応じたSQLファイルを選択
-            db_url = self.db_config.get_database_url()
-            if 'sqlite' in db_url:
-                sql_file = 'sql/create_tables_sqlite.sql'
-            elif 'postgresql' in db_url:
-                sql_file = 'sql/create_tables_postgresql.sql'
-            else:
-                sql_file = 'sql/create_tables.sql'
-            
-            result = self.db_config.execute_sql_file(sql_file)
+            # SQLAlchemyのcreate_allを使用してテーブルを作成
+            result = self.db_config.create_tables_if_not_exists()
             if result:
-                self.logger.info("テーブル作成完了")
+                self.logger.info("テーブル作成処理完了")
             else:
-                self.logger.error("テーブル作成失敗")
+                self.logger.error("テーブル作成処理失敗")
             return result
         except Exception as e:
             self.logger.error(f"テーブル作成エラー: {e}")
