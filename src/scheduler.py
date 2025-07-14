@@ -92,19 +92,59 @@ class NewsScheduler:
             end_date = datetime.now(timezone.utc)
             start_date = end_date - timedelta(hours=1)
             
-            result = self.app.fetch_and_store_news(
-                count=50,
-                start_date=start_date,
-                end_date=end_date
-            )
+            # 金属・マーケット関連カテゴリのリスト
+            target_categories = [
+                # 非鉄金属6種
+                'COPPER',
+                'ALUMINIUM',
+                'ZINC',
+                'LEAD',
+                'NICKEL',
+                'TIN',
+                # マーケット関連3種
+                'EQUITY',
+                'FOREX',
+                'COMMODITIES',
+                # 特別カテゴリ
+                'NY_MARKET'
+            ]
             
-            if result['success']:
+            total_stored = 0
+            total_fetched = 0
+            
+            # 各カテゴリごとにニュースを取得
+            for category in target_categories:
+                self.logger.info(f"カテゴリ '{category}' のニュース取得中...")
+                
+                result = self.app.fetch_and_store_news(
+                    count=10,  # 各カテゴリ10件ずつ取得
+                    category=category,
+                    start_date=start_date,
+                    end_date=end_date
+                )
+                
+                if result['success']:
+                    total_stored += result['articles_stored']
+                    total_fetched += result['articles_fetched']
+                    self.logger.info(f"カテゴリ '{category}': {result['articles_stored']}件格納")
+                else:
+                    self.logger.warning(f"カテゴリ '{category}' 取得失敗: {result['message']}")
+            
+            # 総合結果
+            overall_result = {
+                'success': total_fetched > 0,
+                'articles_fetched': total_fetched,
+                'articles_stored': total_stored,
+                'message': f"全カテゴリで合計 {total_stored}件格納"
+            }
+            
+            if overall_result['success']:
                 self.last_success = datetime.now(timezone.utc)
-                self.logger.info(f"{job_name}成功: {result['articles_stored']}件格納")
+                self.logger.info(f"{job_name}成功: {overall_result['articles_stored']}件格納")
             else:
-                self.logger.error(f"{job_name}失敗: {result['message']}")
+                self.logger.error(f"{job_name}失敗: ニュースが取得できませんでした")
             
-            return result
+            return overall_result
             
         except Exception as e:
             self.logger.error(f"{job_name}エラー: {e}")
@@ -120,23 +160,63 @@ class NewsScheduler:
             end_date = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
             start_date = end_date - timedelta(days=1)
             
-            result = self.app.fetch_and_store_news(
-                count=500,
-                start_date=start_date,
-                end_date=end_date
-            )
+            # 金属・マーケット関連カテゴリのリスト
+            target_categories = [
+                # 非鉄金属6種
+                'COPPER',
+                'ALUMINIUM',
+                'ZINC',
+                'LEAD',
+                'NICKEL',
+                'TIN',
+                # マーケット関連3種
+                'EQUITY',
+                'FOREX',
+                'COMMODITIES',
+                # 特別カテゴリ
+                'NY_MARKET'
+            ]
             
-            if result['success']:
-                self.logger.info(f"{job_name}成功: {result['articles_stored']}件格納")
+            total_stored = 0
+            total_fetched = 0
+            
+            # 各カテゴリごとにニュースを取得
+            for category in target_categories:
+                self.logger.info(f"日次バッチ: カテゴリ '{category}' のニュース取得中...")
+                
+                result = self.app.fetch_and_store_news(
+                    count=50,  # 各カテゴリ50件ずつ取得（日次バッチは多めに）
+                    category=category,
+                    start_date=start_date,
+                    end_date=end_date
+                )
+                
+                if result['success']:
+                    total_stored += result['articles_stored']
+                    total_fetched += result['articles_fetched']
+                    self.logger.info(f"日次バッチ カテゴリ '{category}': {result['articles_stored']}件格納")
+                else:
+                    self.logger.warning(f"日次バッチ カテゴリ '{category}' 取得失敗: {result['message']}")
+            
+            # 総合結果
+            overall_result = {
+                'success': total_fetched > 0,
+                'articles_fetched': total_fetched,
+                'articles_stored': total_stored,
+                'message': f"日次バッチ完了: 全カテゴリで合計 {total_stored}件格納"
+            }
+            
+            if overall_result['success']:
+                self.logger.info(f"{job_name}成功: {overall_result['articles_stored']}件格納")
             else:
-                self.logger.error(f"{job_name}失敗: {result['message']}")
+                self.logger.error(f"{job_name}失敗: ニュースが取得できませんでした")
             
             # 統計情報をログ出力
             stats = self.app.get_news_statistics()
             if stats:
                 self.logger.info(f"総記事数: {stats['total_articles']}, 最新記事: {stats['latest_article']}")
             
-            return result
+            return overall_result
             
         except Exception as e:
             self.logger.error(f"{job_name}エラー: {e}")
