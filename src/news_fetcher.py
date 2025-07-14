@@ -35,6 +35,7 @@ class NewsArticle:
     language: str = "en"
     category: Optional[str] = None
     urgency_level: int = 3
+    priority_score: int = 0
     
     def __post_init__(self):
         """データ検証"""
@@ -69,6 +70,7 @@ class NewsFetcher:
         self.eikon_config = self.config.get('eikon', {})
         self.fetch_config = self.config.get('news_fetch', {})
         self.text_config = self.config.get('text_processing', {})
+        self.filter_config = self.config.get('news_filtering', {})
     
     def _load_config(self) -> Dict[str, Any]:
         """設定ファイル読み込み"""
@@ -202,6 +204,10 @@ class NewsFetcher:
                 # データ検証・クリーニング
                 cleaned_data = self._validate_and_clean_data(news_data)
                 
+                # ソースフィルタリング
+                if self.filter_config.get('source_filtering', {}).get('enabled', False):
+                    cleaned_data = self._filter_by_source(cleaned_data)
+                
                 # 本文取得（オプション）
                 if fetch_body and not cleaned_data.empty:
                     cleaned_data = self._fetch_news_bodies(cleaned_data)
@@ -263,6 +269,10 @@ class NewsFetcher:
                     detected_categories.append(','.join(categories_found) if categories_found else '')
                 
                 cleaned_data['detected_category'] = detected_categories
+                
+                # 優先度スコアリング
+                if self.filter_config.get('priority_scoring', {}).get('enabled', False):
+                    cleaned_data = self._calculate_priority_scores(cleaned_data)
                 
                 self.logger.info(f"ニュース取得成功: {len(cleaned_data)}件")
                 return cleaned_data
@@ -563,7 +573,8 @@ class NewsFetcher:
                     published_at=published_at,
                     language='en',  # デフォルト
                     category=row.get('detected_category'),  # 検出されたカテゴリ
-                    urgency_level=3  # デフォルト
+                    urgency_level=3,  # デフォルト
+                    priority_score=row.get('priority_score', 0)  # 優先度スコア
                 )
                 
                 articles.append(article)
@@ -578,3 +589,92 @@ class NewsFetcher:
     def get_api_stats(self) -> Dict[str, Any]:
         """API統計情報取得"""
         return self.api_logger.get_stats()
+    
+    def _filter_by_source(self, data: pd.DataFrame) -> pd.DataFrame:
+        """
+        ソースによるフィルタリング
+        
+        Args:
+            data: ニュースデータ
+        
+        Returns:
+            フィルタリング済みデータ
+        """
+        if data.empty or 'sourceCode' not in data.columns:
+            return data
+        
+        source_config = self.filter_config.get('source_filtering', {})
+        reliable_sources = source_config.get('reliable_sources', [])
+        excluded_sources = source_config.get('excluded_sources', [])
+        
+        original_count = len(data)
+        
+        # ソースコードをクリーンアップ（NS:RTRS → RTRS）
+        data['clean_source'] = data['sourceCode'].apply(lambda x: x.split(':')[-1] if ':' in x else x)
+        
+        # 除外ソースをフィルタ
+        for excluded in excluded_sources:
+            data = data[~data['clean_source'].str.contains(excluded, case=False, na=False)]
+        
+        # 信頼できるソースのみを優先（オプション）
+        # 現在は除外リストのみ適用し、信頼できるソースリストは参考情報として保持
+        
+        # 一時カラムを削除
+        data = data.drop('clean_source', axis=1)
+        
+        filtered_count = len(data)
+        if filtered_count < original_count:
+            self.logger.info(f"ソースフィルタリング: {original_count} -> {filtered_count}件")
+        
+        return data
+    
+    def _calculate_priority_scores(self, data: pd.DataFrame) -> pd.DataFrame:
+        """
+        優先度スコアを計算
+        
+        Args:
+            data: ニュースデータ
+        
+        Returns:
+            スコア付きデータ
+        """
+        if data.empty:
+            return data
+        
+        scoring_config = self.filter_config.get('priority_scoring', {})
+        keywords_config = scoring_config.get('keywords', {})
+        
+        priority_scores = []
+        
+        for _, row in data.iterrows():
+            score = 0
+            # ヘッドラインと本文を結合してチェック
+            text_to_check = str(row.get('text', '')).lower() + ' ' + str(row.get('body_text', '')).lower()
+            
+            # 各優先度レベルのキーワードをチェック
+            for level, config in keywords_config.items():
+                level_score = config.get('score', 0)
+                terms = config.get('terms', [])
+                
+                for term in terms:
+                    if term.lower() in text_to_check:
+                        score += level_score
+                        self.logger.debug(f"キーワード '{term}' マッチ: +{level_score}点")
+            
+            priority_scores.append(score)
+        
+        data['priority_score'] = priority_scores
+        
+        # 最小スコアでフィルタリング（オプション）
+        min_score = scoring_config.get('minimum_score', 0)
+        if min_score > 0:
+            original_count = len(data)
+            data = data[data['priority_score'] >= min_score]
+            filtered_count = len(data)
+            if filtered_count < original_count:
+                self.logger.info(f"優先度フィルタリング（最小スコア {min_score}）: {original_count} -> {filtered_count}件")
+        
+        # スコアでソート（降順）
+        data = data.sort_values('priority_score', ascending=False)
+        
+        return data

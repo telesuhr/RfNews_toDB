@@ -11,6 +11,9 @@ from sqlalchemy.orm import declarative_base
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 import enum
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+import numpy as np
 
 # 設定とログ
 import sys
@@ -47,6 +50,7 @@ class NewsArticleORM(Base):
     language = Column(String(10), default='en')
     category = Column(String(50), index=True)
     urgency_level = Column(Integer, default=3)
+    priority_score = Column(Integer, default=0, index=True)
     
     def __repr__(self):
         return f"<NewsArticle(story_id='{self.story_id}', headline='{self.headline[:50]}...')>"
@@ -65,7 +69,8 @@ class NewsArticleORM(Base):
             'updated_at': self.updated_at,
             'language': self.language,
             'category': self.category,
-            'urgency_level': self.urgency_level
+            'urgency_level': self.urgency_level,
+            'priority_score': self.priority_score
         }
     
     def validate(self):
@@ -203,7 +208,8 @@ class DatabaseManager:
                     published_at=article.published_at,
                     language=article.language,
                     category=article.category,
-                    urgency_level=article.urgency_level
+                    urgency_level=article.urgency_level,
+                    priority_score=article.priority_score
                 )
                 
                 # データ検証
@@ -244,10 +250,21 @@ class DatabaseManager:
             self.logger.error("データベース未接続")
             return {'success': False, 'inserted_count': 0, 'failed_count': len(articles)}
         
+        # 重複検出用の設定を取得
+        duplicate_config = self.config.get('news_filtering', {}).get('duplicate_detection', {})
+        similarity_enabled = duplicate_config.get('enabled', False)
+        similarity_threshold = duplicate_config.get('similarity_threshold', 0.85)
+        
         inserted_count = 0
         failed_count = 0
         
         for article in articles:
+            # 類似度チェック（有効な場合）
+            if similarity_enabled and self._is_duplicate_by_similarity(article, similarity_threshold):
+                self.logger.debug(f"類似記事スキップ: {article.headline[:50]}...")
+                failed_count += 1
+                continue
+            
             if self.insert_news_article(article):
                 inserted_count += 1
             else:
@@ -548,4 +565,69 @@ class DatabaseManager:
                 
         except Exception as e:
             self.logger.error(f"取得ログ完了エラー: {e}")
+            return False
+    
+    def _is_duplicate_by_similarity(self, article: NewsArticle, threshold: float = 0.85) -> bool:
+        """
+        類似度ベースの重複チェック
+        
+        Args:
+            article: チェック対象の記事
+            threshold: 類似度の閾値（0-1）
+        
+        Returns:
+            重複している場合True
+        """
+        try:
+            # 設定から時間窓を取得
+            check_window_hours = self.config.get('news_filtering', {}).get('duplicate_detection', {}).get('check_window_hours', 24)
+            
+            with self.db_config.get_session() as session:
+                # 指定時間内の記事を取得
+                from datetime import timedelta
+                time_threshold = datetime.now(timezone.utc) - timedelta(hours=check_window_hours)
+                
+                recent_articles = session.query(NewsArticleORM).filter(
+                    NewsArticleORM.published_at >= time_threshold
+                ).all()
+                
+                if not recent_articles:
+                    return False
+                
+                # ヘッドラインのリストを作成
+                existing_headlines = [a.headline for a in recent_articles]
+                existing_headlines.append(article.headline)
+                
+                # TF-IDFベクトル化
+                vectorizer = TfidfVectorizer(
+                    max_features=100,
+                    ngram_range=(1, 2),
+                    stop_words=None  # 日本語と英語混在のため
+                )
+                
+                try:
+                    tfidf_matrix = vectorizer.fit_transform(existing_headlines)
+                except ValueError:
+                    # ベクトル化できない場合はスキップ
+                    return False
+                
+                # 最後の要素（新記事）と他の全ての記事の類似度を計算
+                new_article_vector = tfidf_matrix[-1]
+                similarities = cosine_similarity(new_article_vector, tfidf_matrix[:-1])
+                
+                # 最大類似度をチェック
+                if similarities.size > 0 and np.max(similarities) >= threshold:
+                    max_sim_idx = np.argmax(similarities)
+                    similar_article = recent_articles[max_sim_idx]
+                    self.logger.info(
+                        f"類似記事検出 (類似度: {np.max(similarities):.2f}): "
+                        f"新: '{article.headline[:50]}...' "
+                        f"既存: '{similar_article.headline[:50]}...'"
+                    )
+                    return True
+                
+                return False
+                
+        except Exception as e:
+            self.logger.warning(f"類似度チェックエラー: {e}")
             return False

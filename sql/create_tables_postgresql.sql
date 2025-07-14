@@ -11,7 +11,8 @@ CREATE TABLE IF NOT EXISTS news_articles (
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     language VARCHAR(10) DEFAULT 'en',
     category VARCHAR(50),
-    urgency_level INTEGER DEFAULT 3
+    urgency_level INTEGER DEFAULT 3,
+    priority_score INTEGER DEFAULT 0
 );
 
 -- インデックス作成
@@ -20,6 +21,7 @@ CREATE INDEX IF NOT EXISTS idx_news_articles_published_at ON news_articles(publi
 CREATE INDEX IF NOT EXISTS idx_news_articles_source ON news_articles(source);
 CREATE INDEX IF NOT EXISTS idx_news_articles_category ON news_articles(category);
 CREATE INDEX IF NOT EXISTS idx_news_articles_created_at ON news_articles(created_at);
+CREATE INDEX IF NOT EXISTS idx_news_articles_priority_score ON news_articles(priority_score);
 
 -- コメント追加
 COMMENT ON TABLE news_articles IS 'Refinitivニュース記事マスタ';
@@ -32,6 +34,7 @@ COMMENT ON COLUMN news_articles.published_at IS '発行日時（UTC）';
 COMMENT ON COLUMN news_articles.language IS '言語コード';
 COMMENT ON COLUMN news_articles.category IS 'ニュースカテゴリ';
 COMMENT ON COLUMN news_articles.urgency_level IS '緊急度レベル（1-5）';
+COMMENT ON COLUMN news_articles.priority_score IS '優先度スコア（キーワードベース）';
 
 -- ニュース記事関連銘柄リンクテーブル
 CREATE TABLE IF NOT EXISTS news_rics (

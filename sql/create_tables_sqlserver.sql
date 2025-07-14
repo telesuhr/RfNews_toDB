@@ -11,7 +11,8 @@ CREATE TABLE news_articles (
     updated_at DATETIMEOFFSET DEFAULT SYSDATETIMEOFFSET(),
     language NVARCHAR(10) DEFAULT 'en',
     category NVARCHAR(50),
-    urgency_level INT DEFAULT 3
+    urgency_level INT DEFAULT 3,
+    priority_score INT DEFAULT 0
 );
 
 -- インデックス作成
@@ -20,6 +21,7 @@ CREATE INDEX idx_news_articles_published_at ON news_articles(published_at);
 CREATE INDEX idx_news_articles_source ON news_articles(source);
 CREATE INDEX idx_news_articles_category ON news_articles(category);
 CREATE INDEX idx_news_articles_created_at ON news_articles(created_at);
+CREATE INDEX idx_news_articles_priority_score ON news_articles(priority_score);
 
 -- ニュース記事関連銘柄リンクテーブル
 CREATE TABLE news_rics (
