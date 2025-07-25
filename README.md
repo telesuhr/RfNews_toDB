@@ -117,6 +117,112 @@ python src/scheduler.py --job daily
 python src/scheduler.py --job maintenance
 ```
 
+### Windows定期実行設定
+
+#### 方法1: Windowsタスクスケジューラを使用（推奨）
+
+1. **バッチファイルの作成**
+   
+   プロジェクトルートに `run_scheduler.bat` を作成:
+   ```batch
+   @echo off
+   cd /d "C:\path\to\RfNews_toDB"
+   call venv\Scripts\activate
+   python src/scheduler.py --daemon
+   ```
+
+2. **タスクスケジューラの設定**
+   - `Win + R` → `taskschd.msc` でタスクスケジューラを開く
+   - 「基本タスクの作成」をクリック
+   - タスク名: "Refinitiv News Scheduler"
+   - トリガー: 「コンピューターの起動時」を選択
+   - 操作: 「プログラムの開始」を選択
+   - プログラム: 作成した `run_scheduler.bat` を指定
+   - 「最上位の特権で実行する」にチェック
+
+3. **詳細設定（オプション）**
+   - トリガーの編集で「遅延時間を指定」（30秒程度）
+   - 「タスクの実行時に使うユーザーアカウント」でログオン不要に設定
+
+#### 方法2: Windows起動時の自動実行
+
+1. **スタートアップフォルダに登録**
+   ```batch
+   # スタートアップフォルダを開く
+   Win + R → shell:startup
+   
+   # run_scheduler.batのショートカットを配置
+   ```
+
+2. **最小化実行用バッチファイル**
+   
+   `run_scheduler_minimized.bat`:
+   ```batch
+   @echo off
+   if not "%minimized%"=="" goto :minimized
+   set minimized=true
+   start /min cmd /C "%~0"
+   goto :EOF
+   :minimized
+   cd /d "C:\path\to\RfNews_toDB"
+   call venv\Scripts\activate
+   python src/scheduler.py --daemon
+   ```
+
+#### 方法3: NSSMを使用したWindowsサービス化
+
+1. **NSSM（Non-Sucking Service Manager）のインストール**
+   - https://nssm.cc/ からダウンロード
+   - 解凍してPATHの通った場所に配置
+
+2. **サービスのインストール**
+   ```cmd
+   # 管理者権限のコマンドプロンプトで実行
+   nssm install RefinitivNewsScheduler
+   
+   # GUIで以下を設定
+   Path: C:\path\to\RfNews_toDB\venv\Scripts\python.exe
+   Startup directory: C:\path\to\RfNews_toDB
+   Arguments: src/scheduler.py --daemon
+   ```
+
+3. **サービスの開始**
+   ```cmd
+   nssm start RefinitivNewsScheduler
+   ```
+
+#### トラブルシューティング
+
+**Refinitiv EIKONが起動していない場合**
+- バッチファイルに以下を追加:
+  ```batch
+  # Refinitiv EIKON起動待機
+  timeout /t 60
+  ```
+
+**ログ確認**
+- `logs/refinitiv_news.log` で実行状況を確認
+- Windowsイベントビューアでエラーを確認
+
+**プロセス監視スクリプト**
+`monitor_scheduler.ps1`:
+```powershell
+$processName = "python"
+$scriptPath = "src/scheduler.py"
+
+while($true) {
+    $process = Get-Process $processName -ErrorAction SilentlyContinue | 
+               Where-Object {$_.CommandLine -like "*$scriptPath*"}
+    
+    if (-not $process) {
+        Write-Host "Scheduler not running. Starting..."
+        Start-Process python -ArgumentList "$scriptPath --daemon" -WorkingDirectory "C:\path\to\RfNews_toDB"
+    }
+    
+    Start-Sleep -Seconds 300  # 5分ごとにチェック
+}
+```
+
 ## プロジェクト構造
 
 ```
