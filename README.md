@@ -28,7 +28,6 @@ pip install -r requirements.txt
 2. 設定ファイルの作成
 ```bash
 cp config/config_template.json config/config.json
-cp .env.template .env
 ```
 
 3. 設定ファイルの編集
