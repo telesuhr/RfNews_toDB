@@ -5,7 +5,7 @@ Refinitiv EIKON APIを使用してニュース情報を取得し、データベ�
 ## 機能概要
 
 - **ニュース取得**: Refinitiv EIKON APIからニュースヘッドラインを取得
-- **データベース格納**: 取得したニュースをMySQLデータベースに格納
+- **データベース格納**: 取得したニュースをデータベースに格納（PostgreSQL/SQL Server対応）
 - **重複除去**: 同一記事の重複格納を防止
 - **スケジューリング**: 定期的な自動取得とバッチ処理
 - **エラーハンドリング**: リトライ機能とレート制限対応
@@ -14,7 +14,7 @@ Refinitiv EIKON APIを使用してニュース情報を取得し、データベ�
 ## システム要件
 
 - Python 3.8以上
-- MySQL 5.7以上（または PostgreSQL）
+- PostgreSQL 12以上 または SQL Server 2019以上
 - Refinitiv EIKON デスクトップアプリケーション
 - Refinitiv API キー
 
@@ -27,7 +27,11 @@ pip install -r requirements.txt
 
 2. 設定ファイルの作成
 ```bash
-cp config/config_template.json config/config.json
+# PostgreSQL使用の場合
+cp config/config_template_postgresql.json config/config.json
+
+# SQL Server使用の場合
+cp config/config_template_sqlserver.json config/config.json
 ```
 
 3. 設定ファイルの編集
@@ -37,9 +41,11 @@ cp config/config_template.json config/config.json
     "api_key": "YOUR_REFINITIV_API_KEY_HERE"
   },
   "database": {
+    "type": "postgresql",
     "host": "localhost",
-    "username": "root", 
-    "password": "password",
+    "port": 5432,
+    "username": "postgres", 
+    "password": "your_password",
     "database": "refinitiv_news"
   }
 }
@@ -47,7 +53,11 @@ cp config/config_template.json config/config.json
 
 4. データベースの作成
 ```sql
-CREATE DATABASE refinitiv_news CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+-- PostgreSQLの場合
+CREATE DATABASE refinitiv_news;
+
+-- SQL Serverの場合
+CREATE DATABASE refinitiv_news COLLATE Japanese_CI_AS;
 ```
 
 5. テーブルの作成
