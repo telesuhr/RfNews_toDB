@@ -1,0 +1,79 @@
+{
+  "eikon": {
+    "api_key": "YOUR_REFINITIV_API_KEY_HERE",
+    "timeout_seconds": 30,
+    "max_retries": 3,
+    "retry_delay_seconds": 2,
+    "rate_limit_delay": 1.0
+  },
+  "database": {
+    "type": "postgresql",
+    "host": "localhost",
+    "port": 5432,
+    "username": "your_username",
+    "password": "your_password",
+    "database": "refinitiv_news",
+    "charset": "utf8mb4",
+    "pool_size": 10,
+    "pool_timeout": 30
+  },
+  "news_fetch": {
+    "default_count": 100,
+    "max_count": 500,
+    "languages": ["en", "ja"],
+    "categories": ["COPPER", "ALUMINIUM", "ZINC", "LEAD", "NICKEL", "TIN", "EQUITY", "FOREX", "COMMODITIES", "NY_MARKET"],
+    "fetch_interval_minutes": 5,
+    "backfill_days": 30
+  },
+  "text_processing": {
+    "max_headline_length": 500,
+    "max_summary_length": 2000,
+    "max_body_length": 50000,
+    "duplicate_similarity_threshold": 0.85,
+    "remove_html_tags": true,
+    "normalize_whitespace": true
+  },
+  "logging": {
+    "level": "INFO",
+    "file_path": "logs/refinitiv_news.log",
+    "max_file_size_mb": 100,
+    "backup_count": 5,
+    "console_output": true
+  },
+  "monitoring": {
+    "enable_metrics": true,
+    "alert_on_error_count": 10,
+    "alert_on_zero_fetches": true,
+    "health_check_interval_minutes": 15
+  },
+  "news_filtering": {
+    "priority_scoring": {
+      "enabled": true,
+      "minimum_score": 5,
+      "keywords": {
+        "high_priority": {
+          "score": 10,
+          "terms": ["strike", "shutdown", "supply cut", "force majeure", "production halt"]
+        },
+        "medium_priority": {
+          "score": 5,
+          "terms": ["price", "demand", "supply", "inventory", "lme", "china", "forecast"]
+        },
+        "low_priority": {
+          "score": 2,
+          "terms": ["trade", "market", "report", "analyst", "outlook"]
+        }
+      }
+    },
+    "source_filtering": {
+      "enabled": true,
+      "reliable_sources": ["Reuters", "Bloomberg", "Fastmarkets", "Metal Bulletin"],
+      "excluded_sources": ["spam", "advertisement"]
+    },
+    "duplicate_detection": {
+      "enabled": true,
+      "similarity_threshold": 0.85,
+      "check_window_hours": 24
+    }
+  }
+}

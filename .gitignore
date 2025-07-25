@@ -2,6 +2,11 @@
 config/config.json
 .env
 
+# Test files
+test_*.py
+tests/
+analyze_refinitiv_api.py
+
 # Python
 __pycache__/
 *.py[cod]
