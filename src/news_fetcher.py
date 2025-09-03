@@ -341,18 +341,18 @@ class NewsFetcher:
         # カテゴリ別クエリマッピング（簡素化版）
         category_queries = {
             # 非鉄金属6種
-            'COPPER': 'copper OR "copper prices"',
-            'ALUMINIUM': 'aluminum OR aluminium',
+            'COPPER': 'copper',
+            'ALUMINIUM': 'aluminium',
             'ZINC': 'zinc',
             'LEAD': 'lead',
             'NICKEL': 'nickel',
             'TIN': 'tin',
             # 基本カテゴリ3種
-            'EQUITY': 'Topic:EQUITY',
-            'FOREX': 'Topic:FOREX',
-            'COMMODITIES': 'commodities OR metals',
+            'EQUITY': 'equity',
+            'FOREX': 'forex',
+            'COMMODITIES': 'commodities',
             # 特別カテゴリ
-            'NY_MARKET': 'NY市場サマリー OR ＮＹ市場サマリー'
+            'NY_MARKET': 'market-summary'
         }
         
         # カテゴリクエリを取得

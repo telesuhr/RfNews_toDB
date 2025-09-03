@@ -69,11 +69,41 @@ class DatabaseConfig:
             # urllib.parse.quote_plusでドライバー名をエンコード
             import urllib.parse
             driver_encoded = urllib.parse.quote_plus(driver)
-            return (
-                f"mssql+pyodbc://{self.config['username']}:{self.config['password']}"
+            
+            # Azure SQL Database用の追加パラメータ
+            connection_params = [f"driver={driver_encoded}"]
+            
+            # ODBC Driver 18を使用している場合は暗号化設定を追加
+            if 'ODBC Driver 18' in driver:
+                connection_params.append("TrustServerCertificate=yes")
+                connection_params.append("Encrypt=yes")
+            
+            # 接続タイムアウトを追加
+            connection_params.append("Connection Timeout=30")
+            
+            # パスワードとユーザー名をURLエンコード（特殊文字対策）
+            username_encoded = urllib.parse.quote_plus(self.config['username'])
+            password_encoded = urllib.parse.quote_plus(self.config['password'])
+            
+            # 接続文字列を生成
+            connection_url = (
+                f"mssql+pyodbc://{username_encoded}:{password_encoded}"
                 f"@{self.config['host']}:{self.config.get('port', 1433)}/{self.config['database']}"
-                f"?driver={driver_encoded}"
+                f"?{'&'.join(connection_params)}"
             )
+            
+            # デバッグ用のログ出力（パスワードはマスク）
+            masked_password = '*' * len(self.config['password']) if self.config['password'] else ''
+            debug_url = (
+                f"mssql+pyodbc://{self.config['username']}:{masked_password}"
+                f"@{self.config['host']}:{self.config.get('port', 1433)}/{self.config['database']}"
+                f"?{'&'.join(connection_params)}"
+            )
+            logger.info(f"SQL Server接続文字列生成: {debug_url}")
+            logger.info(f"使用ドライバー: {driver}")
+            logger.info(f"接続パラメータ: {connection_params}")
+            
+            return connection_url
         
         # MySQLデータベースの場合
         if db_type == 'mysql':
