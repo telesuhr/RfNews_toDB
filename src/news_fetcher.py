@@ -505,23 +505,33 @@ class NewsFetcher:
         try:
             # コピーを作成して、元のデータを保持
             data = data.copy()
-            # datetime64ユニット指定によるエラーを回避
-            # pandasの新しいバージョンでは、既にdatetime型の場合にエラーが発生する可能性があるため、
-            # まず型をチェック
-            if data[datetime_column].dtype == 'object':
-                data.loc[:, datetime_column] = pd.to_datetime(data[datetime_column], utc=True, errors='coerce')
-            elif 'datetime' not in str(data[datetime_column].dtype).lower():
-                data.loc[:, datetime_column] = pd.to_datetime(data[datetime_column], utc=True, errors='coerce')
-            # 既にdatetime型の場合は、UTCに変換するだけ
-            elif data[datetime_column].dt.tz is None:
-                data.loc[:, datetime_column] = data[datetime_column].dt.tz_localize('UTC')
-            elif str(data[datetime_column].dt.tz) != 'UTC':
-                data.loc[:, datetime_column] = data[datetime_column].dt.tz_convert('UTC')
-
+            
+            # データ型を確認
+            col_dtype = str(data[datetime_column].dtype).lower()
+            
+            # datetime64の場合はユニットを明示的に指定
+            if 'datetime64' in col_dtype:
+                # 既にdatetime64の場合は、まずobject型に変換してから再度変換
+                data[datetime_column] = data[datetime_column].astype(str)
+                data[datetime_column] = pd.to_datetime(data[datetime_column], utc=True, errors='coerce')
+            elif col_dtype == 'object':
+                # object型の場合は直接変換
+                data[datetime_column] = pd.to_datetime(data[datetime_column], utc=True, errors='coerce')
+            else:
+                # その他の型の場合
+                data[datetime_column] = pd.to_datetime(data[datetime_column], utc=True, errors='coerce')
+            
             # 無効な日時を除外
             data = data[data[datetime_column].notna()]
+            
         except Exception as e:
             self.logger.warning(f"日時フォーマット変換エラー: {e}")
+            # エラーが発生した場合は、該当列を削除して処理を続行
+            try:
+                data = data.drop(columns=[datetime_column])
+                self.logger.warning(f"問題のある日時列 {datetime_column} を削除しました")
+            except Exception:
+                pass
 
         return data
     
