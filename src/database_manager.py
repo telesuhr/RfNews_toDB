@@ -463,6 +463,38 @@ class DatabaseManager:
             self.logger.error(f"統計情報取得エラー: {e}")
             return None
     
+    def get_latest_article_time(self) -> Optional[datetime]:
+        """
+        最新記事の発行時刻を取得
+        
+        Returns:
+            最新記事の発行時刻（UTC）。レコードがない場合はNone
+        """
+        if not self.is_connected:
+            self.logger.error("データベース未接続")
+            return None
+            
+        try:
+            with self.db_config.get_session() as session:
+                from sqlalchemy import text
+                query = """
+                SELECT MAX(published_at) as latest_time
+                FROM news_articles
+                """
+                
+                result = session.execute(text(query)).fetchone()
+                
+                if result and result.latest_time:
+                    self.db_logger.log_query("SELECT", "news_articles (latest_time)")
+                    return result.latest_time
+                else:
+                    self.logger.info("データベースに記事がありません")
+                    return None
+                    
+        except Exception as e:
+            self.logger.error(f"最新記事時刻取得エラー: {e}")
+            return None
+    
     def cleanup_old_articles(self, cutoff_date: datetime) -> int:
         """
         古い記事をクリーンアップ（削除）

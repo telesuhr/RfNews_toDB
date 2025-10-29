@@ -7,6 +7,8 @@ import sys
 import argparse
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Dict, Any
+import schedule
+import time
 
 # パス設定
 sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
@@ -489,6 +491,151 @@ class RefinitivNewsApp:
                 'articles_stored': 0
             }
     
+    def fetch_since_latest(self, count: int = 100, fetch_body: bool = True, monitor: bool = False) -> Dict[str, Any]:
+        """
+        最新記事以降のニュースを取得してデータベースに格納
+        
+        Args:
+            count: カテゴリーあたりの最大取得件数
+            fetch_body: 本文も取得するか
+            monitor: 取得後に5分間隔で監視を開始するか
+        
+        Returns:
+            処理結果辞書
+        """
+        from datetime import timedelta
+        import schedule
+        import time
+        
+        self.logger.info(f"最新記事以降のニュース取得開始: count={count}, monitor={monitor}")
+        
+        # 初期化
+        if not self.initialize():
+            return {
+                'success': False,
+                'message': 'アプリケーション初期化失敗',
+                'articles_fetched': 0,
+                'articles_stored': 0
+            }
+        
+        # 最新記事の時刻を取得
+        latest_time = self.db_manager.get_latest_article_time()
+        
+        if latest_time:
+            # 最新記事時刻の1秒後から取得
+            start_date = latest_time + timedelta(seconds=1)
+            self.logger.info(f"最新記事時刻: {latest_time}, 取得開始時刻: {start_date}")
+        else:
+            # データベースが空の場合は24時間前から取得
+            start_date = datetime.now(timezone.utc) - timedelta(hours=24)
+            self.logger.info(f"データベースが空のため24時間前から取得: {start_date}")
+        
+        # 設定からカテゴリーリストを取得
+        config = self.news_fetcher.config
+        categories = config.get('categories', ['COPPER', 'ALUMINIUM', 'ZINC', 'LEAD', 'NICKEL', 'TIN', 'EQUITY', 'FOREX', 'COMMODITIES', 'NY_MARKET'])
+        
+        total_fetched = 0
+        total_stored = 0
+        total_failed = 0
+        results_by_category = {}
+        
+        # 各カテゴリーでニュースを取得
+        for category in categories:
+            self.logger.info(f"カテゴリー '{category}' のニュース取得中...")
+            
+            try:
+                result = self.fetch_and_store_news(
+                    count=count,
+                    category=category,
+                    start_date=start_date,
+                    fetch_body=fetch_body
+                )
+                
+                if result['success']:
+                    category_fetched = result['articles_fetched']
+                    category_stored = result['articles_stored']
+                    category_failed = result['articles_failed']
+                    
+                    total_fetched += category_fetched
+                    total_stored += category_stored
+                    total_failed += category_failed
+                    
+                    results_by_category[category] = {
+                        'fetched': category_fetched,
+                        'stored': category_stored,
+                        'failed': category_failed
+                    }
+                    
+                    print(f"[OK] {category}: 取得{category_fetched}件、保存{category_stored}件")
+                else:
+                    print(f"[ERROR] {category}: {result['message']}")
+                    results_by_category[category] = {
+                        'fetched': 0,
+                        'stored': 0,
+                        'failed': 0,
+                        'error': result['message']
+                    }
+                    
+            except Exception as e:
+                error_msg = f"カテゴリー '{category}' の取得エラー: {e}"
+                self.logger.error(error_msg)
+                print(f"[ERROR] {category}: {error_msg}")
+                results_by_category[category] = {
+                    'fetched': 0,
+                    'stored': 0,
+                    'failed': 0,
+                    'error': error_msg
+                }
+        
+        # 結果をまとめ
+        result = {
+            'success': True,
+            'message': f'最新記事以降のニュース取得完了（{len(categories)}カテゴリー）',
+            'articles_fetched': total_fetched,
+            'articles_stored': total_stored,
+            'articles_failed': total_failed,
+            'categories_processed': len(categories),
+            'results_by_category': results_by_category,
+            'start_date': start_date.isoformat()
+        }
+        
+        # 監視モードが有効な場合
+        if monitor:
+            self.logger.info("5分間隔監視を開始します...")
+            print("\n[INFO] 5分間隔でニュース監視を開始します（Ctrl+Cで停止）")
+            
+            def fetch_latest_job():
+                """定期実行ジョブ"""
+                try:
+                    print(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 定期ニュースチェック開始...")
+                    
+                    # 最新記事以降を取得（監視なし）
+                    job_result = self.fetch_since_latest(count=count, fetch_body=fetch_body, monitor=False)
+                    
+                    if job_result['success']:
+                        print(f"  取得: {job_result['articles_fetched']}件, 保存: {job_result['articles_stored']}件")
+                    else:
+                        print(f"  エラー: {job_result['message']}")
+                        
+                except Exception as e:
+                    self.logger.error(f"定期実行エラー: {e}")
+                    print(f"  エラー: {e}")
+            
+            # スケジューラー設定
+            schedule.every(5).minutes.do(fetch_latest_job)
+            
+            try:
+                # 無限ループで定期実行
+                while True:
+                    schedule.run_pending()
+                    time.sleep(30)  # 30秒間隔でスケジュールチェック
+            except KeyboardInterrupt:
+                print("\n\n[INFO] 監視を停止しました")
+                self.logger.info("ユーザーにより監視停止")
+        
+        self.logger.info(f"最新記事以降のニュース取得完了: {result}")
+        return result
+    
     def run_once(self, args: argparse.Namespace) -> bool:
         """
         1回だけニュース取得・格納を実行
@@ -614,6 +761,12 @@ def main():
     cleanup_parser = subparsers.add_parser('cleanup', help='古い記事クリーンアップ')
     cleanup_parser.add_argument('--days', type=int, default=365, help='保持日数')
     
+    # fetch-sinceコマンド（最新記事以降取得）
+    fetch_since_parser = subparsers.add_parser('fetch-since', help='最新記事以降のニュースを取得')
+    fetch_since_parser.add_argument('--count', type=int, default=100, help='カテゴリーあたりの最大取得件数')
+    fetch_since_parser.add_argument('--monitor', action='store_true', help='取得後に5分間隔で監視を開始')
+    fetch_since_parser.add_argument('--no-fetch-body', action='store_true', help='本文取得をスキップする')
+    
     # 共通オプション
     parser.add_argument('--config', type=str, default='config/config.json', help='設定ファイルパス')
     parser.add_argument('--verbose', '-v', action='store_true', help='詳細ログ出力')
@@ -717,6 +870,35 @@ def main():
         deleted_count = app.cleanup_old_news(args.days)
         print(f"✓ 古い記事削除完了: {deleted_count}件")
         sys.exit(0)
+
+    elif args.command == 'fetch-since':
+        # 最新記事以降のニュースを取得
+        result = app.fetch_since_latest(
+            count=args.count,
+            fetch_body=not args.no_fetch_body,
+            monitor=args.monitor
+        )
+        
+        # 結果表示
+        if result['success']:
+            print(f"[OK] {result['message']}")
+            print(f"  取得記事数: {result['articles_fetched']}")
+            print(f"  格納記事数: {result['articles_stored']}")
+            print(f"  失敗記事数: {result['articles_failed']}")
+            print(f"  処理カテゴリー数: {result['categories_processed']}")
+            print(f"  開始時刻: {result['start_date']}")
+            
+            # カテゴリー別詳細
+            print("\nカテゴリー別結果:")
+            for category, cat_result in result['results_by_category'].items():
+                if 'error' in cat_result:
+                    print(f"  {category:15}: エラー - {cat_result['error']}")
+                else:
+                    print(f"  {category:15}: 取得{cat_result['fetched']:3}件, 保存{cat_result['stored']:3}件")
+            sys.exit(0)
+        else:
+            print(f"✗ {result['message']}")
+            sys.exit(1)
 
     else:
         parser.print_help()
