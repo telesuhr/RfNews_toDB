@@ -312,10 +312,11 @@ class RefinitivNewsApp:
                                       start_date: datetime = None, end_date: datetime = None,
                                       fetch_body: bool = True, max_pages: int = None) -> Dict[str, Any]:
         """
-        バックフィル専用ニュース取得・格納（時系列を遡る）
+        バックフィル専用ニュース取得・格納（時系列を遡る）- ページごとに保存
 
         Refinitiv APIは最新データを優先して返すため、過去データを取得するには
         時系列を遡るページネーションが必要です。
+        各ページを取得するたびにデータベースに保存します。
 
         Args:
             per_page: 1ページあたりの取得件数
@@ -330,73 +331,147 @@ class RefinitivNewsApp:
         Returns:
             処理結果辞書
         """
-        self.logger.info(f"バックフィル取得・格納開始: per_page={per_page}, category={category}")
+        self.logger.info(f"バックフィル取得・格納開始（ページごと保存）: per_page={per_page}, category={category}")
+
+        if not start_date:
+            return {
+                'success': False,
+                'message': 'start_dateは必須です',
+                'articles_fetched': 0,
+                'articles_stored': 0
+            }
 
         # 取得ログ開始
         log_id = self.db_manager.start_fetch_log()
+        
+        # 統計情報
+        total_fetched = 0
+        total_stored = 0
+        total_failed = 0
+        page_count = 0
+        
+        # end_dateが未指定の場合は現在時刻
+        if not end_date:
+            end_date = datetime.now(timezone.utc)
+            
+        current_end = end_date  # 最新時刻から遡り始める
+        seen_story_ids = set()  # 重複チェック用
 
         try:
-            # バックフィル機能でニュース取得
-            news_data = self.news_fetcher.fetch_headlines_backfill(
-                per_page=per_page,
-                query=query,
-                category=category,
-                language=language,
-                start_date=start_date,
-                end_date=end_date,
-                fetch_body=fetch_body,
-                max_pages=max_pages
-            )
-
-            if news_data is None or news_data.empty:
-                error_msg = "ニュースデータが取得できませんでした"
-                self.logger.warning(error_msg)
-
-                if log_id:
-                    self.db_manager.complete_fetch_log(
-                        log_id=log_id,
-                        error_message=error_msg
-                    )
-
-                return {
-                    'success': False,
-                    'message': error_msg,
-                    'articles_fetched': 0,
-                    'articles_stored': 0
-                }
-
-            # NewsArticleオブジェクトに変換
-            articles = self.news_fetcher.create_news_articles(news_data)
-
-            # データベースに一括挿入
-            store_result = self.db_manager.bulk_insert_news_articles(articles)
-
+            while True:
+                page_count += 1
+                
+                # 最大ページ数チェック
+                if max_pages and page_count > max_pages:
+                    self.logger.warning(f"最大ページ数 {max_pages} に到達しました")
+                    break
+                    
+                self.logger.info(f"ページ {page_count}: {start_date.strftime('%Y-%m-%d %H:%M:%S')} ～ {current_end.strftime('%Y-%m-%d %H:%M:%S')}")
+                
+                # 1ページ分のニュースを取得
+                page_data = self.news_fetcher.fetch_headlines_with_retry(
+                    count=per_page,
+                    query=query or "Topic:TOPALL",
+                    category=category,
+                    language=language,
+                    start_date=start_date,
+                    end_date=current_end,
+                    fetch_body=fetch_body
+                )
+                
+                # 取得失敗またはデータなし
+                if page_data is None or page_data.empty:
+                    self.logger.info(f"ページ {page_count} でデータなし。取得終了。")
+                    break
+                    
+                # 重複除去（既に取得済みのstory_idを除外）
+                api_returned_count = len(page_data)
+                if 'storyId' in page_data.columns:
+                    original_count = len(page_data)
+                    page_data = page_data[~page_data['storyId'].isin(seen_story_ids)]
+                    seen_story_ids.update(page_data['storyId'].tolist())
+                    duplicate_count = original_count - len(page_data)
+                    if duplicate_count > 0:
+                        self.logger.info(f"重複除外: {duplicate_count}件（新規: {len(page_data)}件）")
+                
+                # データがある場合のみ保存
+                if not page_data.empty:
+                    # NewsArticleオブジェクトに変換
+                    articles = self.news_fetcher.create_news_articles(page_data)
+                    
+                    # データベースに保存
+                    store_result = self.db_manager.bulk_insert_news_articles(articles)
+                    
+                    # 統計更新
+                    page_fetched = len(articles)
+                    page_stored = store_result['inserted_count']
+                    page_failed = store_result['failed_count']
+                    
+                    total_fetched += page_fetched
+                    total_stored += page_stored
+                    total_failed += page_failed
+                    
+                    self.logger.info(f"ページ {page_count}: 取得{page_fetched}件、保存{page_stored}件、失敗{page_failed}件（累計: 取得{total_fetched}件、保存{total_stored}件）")
+                
+                # 終了条件チェック
+                if api_returned_count < per_page:
+                    self.logger.info(f"API取得件数が{per_page}件未満（{api_returned_count}件）。")
+                    if current_end > start_date + timedelta(hours=1):
+                        self.logger.info(f"start_dateまで遡り続けます。")
+                    else:
+                        self.logger.info(f"start_date付近に到達しました。取得終了。")
+                        break
+                        
+                # 次のページのend_dateを設定（時系列を遡る）
+                if 'versionCreated' in page_data.columns and not page_data.empty:
+                    page_data_sorted = page_data.sort_values('versionCreated', ascending=True)
+                    oldest_datetime = page_data_sorted.iloc[0]['versionCreated']
+                    
+                    if isinstance(oldest_datetime, str):
+                        oldest_datetime = pd.to_datetime(oldest_datetime, utc=True)
+                    elif hasattr(oldest_datetime, 'to_pydatetime'):
+                        oldest_datetime = oldest_datetime.to_pydatetime()
+                        
+                    # 1秒前に設定（重複回避）
+                    next_end = oldest_datetime - timedelta(seconds=1)
+                    
+                    # next_endがstart_dateより前の場合は終了
+                    if next_end <= start_date:
+                        self.logger.info(f"start_dateに到達しました。取得終了。")
+                        break
+                        
+                    current_end = next_end
+                else:
+                    self.logger.warning("versionCreatedカラムが見つかりません。ページネーション継続不可。")
+                    break
+                    
             # API統計情報取得
             api_stats = self.news_fetcher.get_api_stats()
-
+            
             # 取得ログ完了
             if log_id:
                 self.db_manager.complete_fetch_log(
                     log_id=log_id,
-                    articles_fetched=len(articles),
-                    articles_inserted=store_result['inserted_count'],
+                    articles_fetched=total_fetched,
+                    articles_inserted=total_stored,
                     articles_updated=0,
                     api_calls=api_stats.get('total_calls', 0)
                 )
-
+                
             result = {
                 'success': True,
-                'message': 'バックフィル取得・格納完了',
-                'articles_fetched': len(articles),
-                'articles_stored': store_result['inserted_count'],
-                'articles_failed': store_result['failed_count'],
+                'message': f'バックフィル取得・格納完了（{page_count}ページ）',
+                'articles_fetched': total_fetched,
+                'articles_stored': total_stored,
+                'articles_failed': total_failed,
                 'api_calls': api_stats.get('total_calls', 0),
-                'processing_time': api_stats.get('runtime_seconds', 0)
+                'processing_time': api_stats.get('runtime_seconds', 0),
+                'pages_processed': page_count
             }
-
+            
             self.logger.info(f"バックフィル取得・格納完了: {result}")
             return result
-
+            
         except Exception as e:
             error_msg = f"バックフィル取得・格納エラー: {e}"
             self.logger.error(error_msg)
@@ -450,7 +525,7 @@ class RefinitivNewsApp:
         
         # 結果表示
         if result['success']:
-            print(f"✓ {result['message']}")
+            print(f"[OK] {result['message']}")
             print(f"  取得記事数: {result['articles_fetched']}")
             print(f"  格納記事数: {result['articles_stored']}")
             print(f"  失敗記事数: {result['articles_failed']}")
@@ -584,7 +659,7 @@ def main():
 
         # 結果表示
         if result['success']:
-            print(f"✓ {result['message']}")
+            print(f"[OK] {result['message']}")
             print(f"  取得記事数: {result['articles_fetched']}")
             print(f"  格納記事数: {result['articles_stored']}")
             print(f"  失敗記事数: {result['articles_failed']}")
@@ -620,7 +695,7 @@ def main():
 
         # 結果表示
         if result['success']:
-            print(f"✓ {result['message']}")
+            print(f"[OK] {result['message']}")
             print(f"  取得記事数: {result['articles_fetched']}")
             print(f"  格納記事数: {result['articles_stored']}")
             print(f"  失敗記事数: {result['articles_failed']}")

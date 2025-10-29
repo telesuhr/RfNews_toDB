@@ -21,6 +21,13 @@ except ImportError:
     print("Warning: eikon module not found. Some features may not work.")
     ek = None
 
+try:
+    from langdetect import detect, LangDetectException
+except ImportError:
+    print("Warning: langdetect module not found. Language detection will be disabled.")
+    detect = None
+    LangDetectException = Exception
+
 from logger import setup_logger, APICallLogger
 
 @dataclass
@@ -338,25 +345,32 @@ class NewsFetcher:
         if query:
             return query
         
-        # カテゴリ別クエリマッピング（簡素化版）
+        # カテゴリ別クエリマッピング（Refinitivのトピックコードを使用）
         category_queries = {
-            # 非鉄金属6種
-            'COPPER': 'copper',
-            'ALUMINIUM': 'aluminium',
-            'ZINC': 'zinc',
-            'LEAD': 'lead',
-            'NICKEL': 'nickel',
-            'TIN': 'tin',
-            # 基本カテゴリ3種
-            'EQUITY': 'equity',
-            'FOREX': 'forex',
-            'COMMODITIES': 'commodities',
+            # 非鉄金属6種 - より正確なクエリ
+            'COPPER': 'Topic:COPP OR copper OR 銅',
+            'ALUMINIUM': 'Topic:ALU OR aluminium OR aluminum OR アルミ',
+            'ZINC': 'Topic:ZINC OR zinc OR 亜鉛',
+            'LEAD': 'Topic:LEAD OR lead metal OR 鉛',
+            'NICKEL': 'Topic:NI OR nickel OR ニッケル',
+            'TIN': 'Topic:TIN OR tin OR スズ OR 錫',
+            # 基本カテゴリ
+            'EQUITY': 'Topic:EQU OR equity OR stock',
+            'FOREX': 'Topic:FX OR forex OR foreign exchange',
+            'COMMODITIES': 'Topic:COM OR commodity OR commodities',
             # 特別カテゴリ
-            'NY_MARKET': 'ＮＹ市場サマリー'
+            'NY_MARKET': '(ＮＹ市場サマリー OR NY市場 OR ニューヨーク市場)'
         }
         
-        # カテゴリクエリを取得
-        base_query = category_queries.get(category, 'Topic:TOPALL')
+        # カテゴリクエリを取得（カテゴリ未指定の場合はNoneを返す）
+        if category:
+            base_query = category_queries.get(category)
+            if not base_query:
+                self.logger.warning(f"未定義のカテゴリ: {category}")
+                return None
+        else:
+            # カテゴリ未指定の場合は設定されたカテゴリのみを取得
+            return None
         
         # 言語フィルタを追加（シンプルなクエリに変更）
         if language:
@@ -384,8 +398,8 @@ class NewsFetcher:
             try:
                 story_id = row['storyId']
                 
-                # レート制限
-                self._apply_rate_limit()
+                # レート制限（本文取得用）
+                self._apply_rate_limit(is_body_fetch=True)
                 
                 # 本文取得
                 body = ek.get_news_story(story_id)
@@ -436,9 +450,12 @@ class NewsFetcher:
             self.logger.warning(f"HTML クリーニングエラー: {e}")
             return html_text
     
-    def _apply_rate_limit(self):
+    def _apply_rate_limit(self, is_body_fetch=False):
         """レート制限適用"""
-        delay = self.eikon_config.get('rate_limit_delay', 1.0)
+        if is_body_fetch:
+            delay = self.eikon_config.get('body_fetch_delay', 5.0)
+        else:
+            delay = self.eikon_config.get('rate_limit_delay', 1.0)
         self.api_logger.log_rate_limit(delay)
         time.sleep(delay)
     
@@ -619,7 +636,8 @@ class NewsFetcher:
             言語コード (en, ja, ko, es, fr, de, zh-cn, unknown など)
         """
         try:
-            from langdetect import detect, LangDetectException
+            if detect is None:
+                return 'unknown'
 
             if not text or len(text.strip()) < 3:
                 return 'unknown'

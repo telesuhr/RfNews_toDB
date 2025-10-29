@@ -1,7 +1,20 @@
 {
   "permissions": {
     "allow": [
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git push:*)",
+      "Bash(rg:*)",
+      "Bash(powershell:*)",
+      "Bash(grep:*)",
+      "Bash(python:*)",
+      "Bash(pip install:*)",
+      "Bash(dir logs*.log /od)",
+      "Bash(ls:*)",
+      "Bash(timeout:*)",
+      "Bash(dir:*)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(rm:*)"
     ],
     "deny": []
   }

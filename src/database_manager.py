@@ -439,7 +439,7 @@ class DatabaseManager:
                     COUNT(DISTINCT source) as sources_count,
                     MAX(published_at) as latest_article,
                     MIN(published_at) as earliest_article,
-                    AVG(LENGTH(headline)) as avg_headline_length
+                    AVG(LEN(headline)) as avg_headline_length
                 FROM news_articles
                 """
                 

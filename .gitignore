@@ -53,6 +53,14 @@ logs/*.log
 .coverage
 htmlcov/
 
+# Temporary files and outputs
+ERROR
+SUCCESS
+*_news_*.txt
+check_*.py
+export_*.py
+update_*.py
+
 # OS
 .DS_Store
 Thumbs.db
